@@ -34,7 +34,10 @@ local defaults = {
     .. "current sentence and train of thought — do not restate, rephrase, summarize, answer, "
     .. "greet, or comment. Match the author's tense, tone, and style. Keep it to a single short "
     .. "line, at most one sentence. No new paragraphs, no lists, no quotation marks. If the "
-    .. "text ends mid-word, finish that word first.",
+    .. "text ends mid-word, finish that word first. "
+    .. "The author's name is Toast and usually writes in English. Use British English (with "
+    .. "-ise spellings) spelling and punctuation. Write in a clear, sardonic voice. Keep "
+    .. "sentences short, concise and readable.",
   data_file = nil, -- default: stdpath('data')/cotyper/model.json
   debug = false, -- notify on debounce fire, query start, and query completion
 }
