@@ -1,17 +1,11 @@
 # cotyper.nvim
-
-Always-on inline autocomplete for Neovim, inspired by the [Cotypist](https://cotypist.app/)
-macOS app. Ghost text appears as you type; **Tab accepts it one word at a time**; keep
-typing to reject. Built by Bajortski (with Claude).
+Inline autocomplete for Neovim, inspired by [Cotypist](https://cotypist.app/). Ghost text appears ahead of your cursor as you type; pressing Tab accepts it one word at a time; keep typing to clear the ghost. Built by Claude Fable.
 
 Two prediction tiers work together:
+1. **Instant** — a local n-gram model that **learns from your own writing** and persists to disk. Zero latency, gives the "snaps to the word you meant" feel.
+2. **Smart** — a debounced async call to a local model that supersedes the n-gram guess with a richer continuation when it arrives.
 
-1. **Instant** — a local n-gram model that **learns from your own writing** and persists
-   to disk. Zero latency, gives the "snaps to the word you meant" feel.
-2. **Smart** — a debounced async call to a local LLM (`gemma4` via Ollama) that
-   supersedes the n-gram guess with a richer continuation when it arrives.
-
-Everything runs locally. No prose leaves your machine.
+Everything runs locally.
 
 ## Usage
 
@@ -22,7 +16,6 @@ Everything runs locally. No prose leaves your machine.
 | *(type)* | a ghost is showing  | Ignore it — the ghost re-snaps to what you meant |
 
 Tab is wired in your own keymap (see Installation). Also:
-
 - `require("cotyper").accept_all()` — accept the whole suggestion at once.
 - `:CotyperToggle` — turn suggestions on/off.
 - `:CotyperDismiss` — clear the current ghost.
@@ -36,7 +29,6 @@ Tab is wired in your own keymap (see Installation). Also:
 - `:CotyperStyle` — print the current learned style guide.
 
 ## Requirements
-
 - Neovim 0.10+ (`vim.system`, `vim.uv`).
 - `curl` on `PATH`.
 - For the smart tier: [Ollama](https://ollama.com) running locally, plus a model of your
@@ -48,8 +40,8 @@ Tab is wired in your own keymap (see Installation). Also:
   the LLM entirely.
 
 ## Installation (lazy.nvim)
-
 ```lua
+
 {
   "Bajortski/cotyper.nvim",
   event = "InsertEnter",
@@ -62,9 +54,7 @@ Tab is wired in your own keymap (see Installation). Also:
 }
 ```
 
-cotyper only accepts the ghost when you tell it to. Wire `Tab` wherever your completion
-`Tab` lives so it takes priority when a ghost is visible, e.g. in a blink.cmp keymap:
-
+cotyper only accepts the ghost when you tell it to. Wire `Tab` wherever your completion `Tab` lives so it takes priority when a ghost is visible, e.g. in a blink.cmp keymap:
 ```lua
 ["<Tab>"] = {
   function(cmp)
@@ -77,7 +67,6 @@ cotyper only accepts the ghost when you tell it to. Wire `Tab` wherever your com
 ```
 
 ## Configuration
-
 `opts` is passed to `require("cotyper").setup()`. Defaults:
 
 ```lua
@@ -104,10 +93,7 @@ opts = {
 }
 ```
 
-`system_prompt` holds the general "act like ghost-text autocomplete" instruction; keep
-your own preferences (name, dialect, tone) in `style` instead, so they stay separate and
-easy to edit. `style` is appended after `system_prompt` at request time. For example:
-
+`system_prompt` holds the general "act like ghost-text autocomplete" instruction; keep your own preferences (name, dialect, tone) in `style` instead, so they stay separate and easy to edit. `style` is appended after `system_prompt` at request time. For example:
 ```lua
 opts = {
   style = "Write in British English (-ise spellings), in a clear, sardonic voice. "
@@ -116,7 +102,6 @@ opts = {
 ```
 
 Prose-only, ghost linked to your `Comment` colour, no LLM:
-
 ```lua
 opts = {
   filetypes = { "markdown", "text", "tex" },
@@ -126,12 +111,10 @@ opts = {
 ```
 
 ## How the model learns
-
 Words from your markdown buffers are folded into unigram/bigram/trigram counts on
 `InsertLeave` and `BufWritePost`. The model is saved every `save_interval` seconds (and on
 exit) to `data_file`, and reloaded on startup — so predictions improve the more you write
 and survive restarts. Rare entries are pruned once the vocabulary grows past `prune_cap`.
 
 ## License
-
 I do not care what you do with this.
