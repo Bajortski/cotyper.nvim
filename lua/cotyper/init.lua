@@ -42,6 +42,12 @@ local defaults = {
   style = nil,
   data_file = nil, -- default: stdpath('data')/cotyper/model.json
   debug = false, -- notify on debounce fire, query start, and query completion
+  -- :CotyperAssessStyle asks the model to write a style guide from your writing and folds
+  -- it into every completion prompt so output tracks your voice over time.
+  style_file = nil, -- default: stdpath('data')/cotyper/style.md
+  assess_sample_lines = 400, -- lines of the current buffer sampled when assessing
+  assess_max_tokens = 512, -- num_predict for the assessment (a longer, one-off generation)
+  assess_num_ctx = 8192, -- context window for the assessment (must fit the writing sample)
 }
 
 local cfg = vim.deepcopy(defaults)
@@ -69,6 +75,8 @@ local save_timer = nil
 local enabled = true
 local squelch = false -- skip the auto-recompute for one tick right after an accept
 local llm_seq = 0 -- request generation, to drop stale LLM responses
+local learned_style = nil -- model-written style assessment, loaded from disk, used in prompts
+local assessing = false -- guard against concurrent :CotyperAssessStyle runs
 
 -- ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -325,12 +333,19 @@ end
 
 -- ── LLM tier ─────────────────────────────────────────────────────────────────
 
--- General instruction plus the author's personal style block (if any), kept separate.
+-- General instruction, then the author's own style block, then the model's learned style
+-- assessment (from :CotyperAssessStyle) — each kept as a separate section.
 local function system_content()
+  local parts = { cfg.system_prompt }
   if cfg.style and cfg.style ~= "" then
-    return cfg.system_prompt .. "\n\n" .. cfg.style
+    parts[#parts + 1] = cfg.style
   end
-  return cfg.system_prompt
+  if learned_style and learned_style ~= "" then
+    parts[#parts + 1] = "Observed style of this author — match it for voice, rhythm and "
+      .. "diction, but where it conflicts with the author's stated preferences above, the "
+      .. "stated preferences win:\n" .. learned_style
+  end
+  return table.concat(parts, "\n\n")
 end
 
 local warned_no_model = false
@@ -596,6 +611,109 @@ local function load()
 end
 M.load = load
 
+-- ── style assessment ─────────────────────────────────────────────────────────
+
+local function style_path()
+  return cfg.style_file or (vim.fn.stdpath("data") .. "/cotyper/style.md")
+end
+
+local function load_style()
+  local fd = io.open(style_path(), "r")
+  if not fd then
+    return
+  end
+  local content = fd:read("*a")
+  fd:close()
+  if content and content:match("%S") then
+    learned_style = content
+  end
+end
+
+local function save_style(text)
+  local path = style_path()
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+  local fd = io.open(path, "w")
+  if fd then
+    fd:write(text)
+    fd:close()
+  end
+end
+
+-- Ask the model to write (or refine) a style guide from the current buffer's writing, then
+-- persist it and fold it into future completion prompts.
+local function assess_style()
+  if not cfg.model or cfg.model == "" then
+    vim.notify("cotyper: set `model` before assessing style.", vim.log.levels.WARN)
+    return
+  end
+  if assessing then
+    vim.notify("cotyper: a style assessment is already running.")
+    return
+  end
+
+  local buf = api.nvim_get_current_buf()
+  local lines = api.nvim_buf_get_lines(buf, 0, cfg.assess_sample_lines, false)
+  local sample = table.concat(lines, "\n")
+  if not sample:match("%S") then
+    vim.notify("cotyper: buffer is empty — nothing to assess.", vim.log.levels.WARN)
+    return
+  end
+
+  local instruction = "You are a writing coach building a concise style guide so another "
+    .. "model can imitate this author. Read the writing sample and produce a short, "
+    .. "prescriptive style guide (6-10 bullet points) covering: voice and tone; typical "
+    .. "sentence length and rhythm; vocabulary and diction; punctuation habits; "
+    .. "dialect/spelling; and any recurring quirks. Be specific and actionable. If a "
+    .. "PREVIOUS STYLE GUIDE is given, revise and sharpen it using the new sample rather "
+    .. "than starting over. Output only the style guide, no preamble."
+  local user = sample
+  if learned_style and learned_style ~= "" then
+    user = "PREVIOUS STYLE GUIDE:\n" .. learned_style .. "\n\nWRITING SAMPLE:\n" .. sample
+  end
+
+  local body = vim.json.encode({
+    model = cfg.model,
+    stream = false,
+    think = cfg.think,
+    messages = {
+      { role = "system", content = instruction },
+      { role = "user", content = user },
+    },
+    keep_alive = cfg.keep_alive,
+    options = { num_predict = cfg.assess_max_tokens, num_ctx = cfg.assess_num_ctx },
+  })
+
+  assessing = true
+  vim.notify("cotyper: assessing writing style…")
+  local t0 = uv.hrtime()
+
+  vim.system({
+    "curl", "-s", "-m", "120", cfg.endpoint,
+    "-H", "Content-Type: application/json",
+    "-d", body,
+  }, { text = true }, function(res)
+    local ms = math.floor((uv.hrtime() - t0) / 1e6)
+    vim.schedule(function()
+      assessing = false
+      if res.code ~= 0 or not res.stdout or res.stdout == "" then
+        vim.notify("cotyper: style assessment failed (curl " .. res.code .. ").", vim.log.levels.ERROR)
+        return
+      end
+      local ok, parsed = pcall(vim.json.decode, res.stdout)
+      local content = ok and parsed and parsed.message and parsed.message.content
+      if type(content) ~= "string" or not content:match("%S") then
+        vim.notify("cotyper: style assessment returned nothing.", vim.log.levels.WARN)
+        return
+      end
+      content = content:gsub("<think>.-</think>", ""):gsub("^%s+", ""):gsub("%s+$", "")
+      learned_style = content
+      save_style(content)
+      vim.notify("cotyper: style guide updated in " .. ms .. "ms (" .. style_path() .. ").")
+    end)
+  end)
+end
+M.assess_style = assess_style
+
 -- Exposed for testing the instant tier headlessly.
 function M._learn_text(str)
   learn(words_of(str))
@@ -623,6 +741,7 @@ function M.setup(opts)
 
   set_hl()
   load()
+  load_style()
 
   local grp = api.nvim_create_augroup("cotyper", { clear = true })
 
@@ -675,6 +794,16 @@ function M.setup(opts)
     cfg.debug = not cfg.debug
     vim.notify("cotyper debug " .. (cfg.debug and "on" or "off"))
   end, { desc = "Toggle cotyper debug notifications" })
+  api.nvim_create_user_command("CotyperAssessStyle", assess_style, {
+    desc = "Have the model assess this buffer's writing style and use it in completions",
+  })
+  api.nvim_create_user_command("CotyperStyle", function()
+    if learned_style and learned_style ~= "" then
+      vim.notify(learned_style)
+    else
+      vim.notify("cotyper: no style guide yet — run :CotyperAssessStyle.")
+    end
+  end, { desc = "Show the current learned style guide" })
 end
 
 return M

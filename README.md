@@ -28,6 +28,12 @@ Tab is wired in your own keymap (see Installation). Also:
 - `:CotyperDismiss` — clear the current ghost.
 - `:CotyperDebug` — toggle debug notifications: when the debounce fires, when a query
   starts, and when it completes (with elapsed ms). Handy for diagnosing LLM latency.
+- `:CotyperAssessStyle` — have the model read the current buffer and write a concise style
+  guide (voice, rhythm, diction, quirks). It's saved to disk and folded into every
+  completion prompt, so suggestions track your voice. Re-run it to refine the guide from
+  new writing (it revises the previous one rather than starting over). Your explicit
+  `style` preferences always take precedence over the learned guide.
+- `:CotyperStyle` — print the current learned style guide.
 
 ## Requirements
 
