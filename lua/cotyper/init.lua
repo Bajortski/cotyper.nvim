@@ -11,7 +11,7 @@ local uv = vim.uv or vim.loop
 local M = {}
 
 local defaults = {
-  model = "gemma4:e2b-mlx",
+  model = nil, -- REQUIRED for the LLM tier: any Ollama model you've pulled, e.g. "gemma4:e2b-mlx"
   endpoint = "http://localhost:11434/v1/chat/completions",
   api_key_env = "TERM", -- Ollama ignores the key; mirrors the OpenAI-compatible setup.
   filetypes = { "markdown" },
@@ -269,8 +269,24 @@ end
 
 -- ── LLM tier ─────────────────────────────────────────────────────────────────
 
+local warned_no_model = false
+
 local function llm_request()
   if not cfg.llm then
+    return
+  end
+  if not cfg.model or cfg.model == "" then
+    if not warned_no_model then
+      warned_no_model = true
+      vim.schedule(function()
+        vim.notify(
+          "cotyper: set `model` (an Ollama model you've pulled, e.g. 'gemma4:e2b-mlx') "
+            .. "to enable LLM completions, or set `llm = false` to silence this. "
+            .. "The n-gram tier works regardless.",
+          vim.log.levels.WARN
+        )
+      end)
+    end
     return
   end
   local buf, row, col, before = cursor_prefix()

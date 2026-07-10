@@ -31,11 +31,13 @@ Tab is wired in your own keymap (see Installation). Also:
 
 - Neovim 0.10+ (`vim.system`, `vim.uv`).
 - `curl` on `PATH`.
-- For the smart tier: [Ollama](https://ollama.com) running locally with a model pulled:
+- For the smart tier: [Ollama](https://ollama.com) running locally, plus a model of your
+  choice pulled and named in `opts.model` — cotyper doesn't assume one. For example:
   ```sh
-  ollama pull gemma4:e2b-mlx
+  ollama pull gemma4:e2b-mlx   # then: opts = { model = "gemma4:e2b-mlx" }
   ```
-  The n-gram tier works fine on its own; set `llm = false` to skip the LLM entirely.
+  The n-gram tier works fine on its own; leave `model` unset (or `llm = false`) to skip
+  the LLM entirely.
 
 ## Installation (lazy.nvim)
 
@@ -43,7 +45,9 @@ Tab is wired in your own keymap (see Installation). Also:
 {
   "Bajortski/cotyper.nvim",
   event = "InsertEnter",
-  opts = {},
+  opts = {
+    model = "gemma4:e2b-mlx", -- any Ollama model you've pulled; required for the LLM tier
+  },
   config = function(_, opts)
     require("cotyper").setup(opts)
   end,
@@ -70,7 +74,7 @@ cotyper only accepts the ghost when you tell it to. Wire `Tab` wherever your com
 
 ```lua
 opts = {
-  model      = "gemma4:e2b-mlx",
+  model      = nil,            -- REQUIRED for the LLM tier: any Ollama model you've pulled
   endpoint   = "http://localhost:11434/v1/chat/completions",
   api_key_env = "TERM",        -- env var read for the Bearer token (Ollama ignores it)
   filetypes  = { "markdown" }, -- nil/empty = every normal buffer
