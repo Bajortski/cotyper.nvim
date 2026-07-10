@@ -21,8 +21,10 @@ local defaults = {
   min_count = 2, -- prune threshold when the model grows past `prune_cap`
   prune_cap = 15000, -- unique unigrams before pruning kicks in
   save_interval = 60, -- seconds between periodic model saves
-  context_lines = 20, -- lines of buffer context sent to the LLM
-  max_tokens = 48,
+  context_lines = 8, -- lines of buffer context sent to the LLM (smaller = faster eval)
+  max_tokens = 20, -- num_predict: tokens the LLM generates per completion
+  num_ctx = 1024, -- context window; cap it (gemma4 defaults to 128K, which is slow)
+  keep_alive = "10m", -- keep the model resident so it doesn't cold-reload after a pause
   llm = true, -- set false to run on the n-gram tier alone
   highlight = { fg = "#808080", italic = true },
   system_prompt = "You are a writing assistant completing prose in the author's voice. "
@@ -309,7 +311,8 @@ local function llm_request()
       { role = "system", content = cfg.system_prompt },
       { role = "user", content = ctx },
     },
-    options = { num_predict = cfg.max_tokens },
+    keep_alive = cfg.keep_alive,
+    options = { num_predict = cfg.max_tokens, num_ctx = cfg.num_ctx },
   })
 
   llm_seq = llm_seq + 1
