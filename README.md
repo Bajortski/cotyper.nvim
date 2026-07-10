@@ -26,6 +26,8 @@ Tab is wired in your own keymap (see Installation). Also:
 - `require("cotyper").accept_all()` — accept the whole suggestion at once.
 - `:CotyperToggle` — turn suggestions on/off.
 - `:CotyperDismiss` — clear the current ghost.
+- `:CotyperDebug` — toggle debug notifications: when the debounce fires, when a query
+  starts, and when it completes (with elapsed ms). Handy for diagnosing LLM latency.
 
 ## Requirements
 

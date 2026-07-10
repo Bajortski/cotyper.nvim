@@ -32,11 +32,21 @@ local defaults = {
     .. "Avoid hedging, filler and lists. Do not repeat the text given. "
     .. "Reply with only the continuation, no quotes or commentary.",
   data_file = nil, -- default: stdpath('data')/cotyper/model.json
+  debug = false, -- notify on debounce fire, query start, and query completion
 }
 
 local cfg = vim.deepcopy(defaults)
 local ns = api.nvim_create_namespace("cotyper")
 local ftset = {} -- eligible filetypes as a set
+
+-- Debug notify (no-op unless cfg.debug). Scheduled so it's safe from libuv callbacks.
+local function dbg(msg, level)
+  if cfg.debug then
+    vim.schedule(function()
+      vim.notify("cotyper: " .. msg, level or vim.log.levels.INFO)
+    end)
+  end
+end
 
 -- ── n-gram model ─────────────────────────────────────────────────────────────
 -- uni[w] = count ; bi[w1][w2] = count ; tri["w1 w2"][w3] = count
@@ -317,19 +327,25 @@ local function llm_request()
 
   llm_seq = llm_seq + 1
   local seq = llm_seq
+  local t0 = uv.hrtime()
+  dbg("query start (" .. tostring(cfg.model) .. ")")
 
   vim.system({
     "curl", "-s", "-m", "30", cfg.endpoint,
     "-H", "Content-Type: application/json",
     "-d", body,
   }, { text = true }, function(res)
+    local ms = math.floor((uv.hrtime() - t0) / 1e6)
     if res.code ~= 0 or not res.stdout or res.stdout == "" then
+      dbg("query failed after " .. ms .. "ms (curl code " .. res.code .. ")", vim.log.levels.WARN)
       return
     end
     local ok, parsed = pcall(vim.json.decode, res.stdout)
     if not ok or type(parsed) ~= "table" then
+      dbg("query returned unparseable response after " .. ms .. "ms", vim.log.levels.WARN)
       return
     end
+    dbg("query complete in " .. ms .. "ms")
     -- Native /api/chat returns { message = { content, thinking } }; reasoning is kept out
     -- of content. Strip any inline <think>…</think> too, in case a template emits it.
     local content = parsed.message and parsed.message.content
@@ -377,6 +393,7 @@ local function schedule_trigger()
     trigger_timer:stop()
     trigger_timer:close()
     trigger_timer = nil
+    dbg("debounce fired after " .. cfg.debounce .. "ms idle -> triggering")
     vim.schedule(M.trigger)
   end)
 end
@@ -598,6 +615,10 @@ function M.setup(opts)
   api.nvim_create_user_command("CotyperDismiss", function()
     clear()
   end, {})
+  api.nvim_create_user_command("CotyperDebug", function()
+    cfg.debug = not cfg.debug
+    vim.notify("cotyper debug " .. (cfg.debug and "on" or "off"))
+  end, { desc = "Toggle cotyper debug notifications" })
 end
 
 return M
