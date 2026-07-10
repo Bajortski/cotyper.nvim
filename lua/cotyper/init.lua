@@ -34,7 +34,8 @@ local defaults = {
     .. "current sentence and train of thought — do not restate, rephrase, summarize, answer, "
     .. "greet, or comment. Match the author's tense, tone, and style. Keep it to a single short "
     .. "line, at most one sentence. No new paragraphs, no lists, no quotation marks. If the "
-    .. "text ends mid-word, finish that word first. "
+    .. "text ends mid-word, finish that word first. Never repeat words the author has "
+    .. "already written; begin with the next new word, not a word already on the page. "
     .. "The author's name is Toast and usually writes in English. Use British English (with "
     .. "-ise spellings) spelling and punctuation. Write in a clear, sardonic voice. Keep "
     .. "sentences short, concise and readable.",
@@ -76,6 +77,41 @@ local function words_of(str)
     out[#out + 1] = w:lower()
   end
   return out
+end
+
+-- Models often echo the last word(s) already typed ("...contextual" -> "contextual aware").
+-- Drop any leading words of `cont` that repeat the tail of `before` (case-insensitive,
+-- ignoring surrounding punctuation), so the suggestion picks up where the author left off.
+local function strip_overlap(before, cont)
+  local function split(s)
+    local t = {}
+    for w in s:gmatch("%S+") do
+      t[#t + 1] = w
+    end
+    return t
+  end
+  local function norm(w)
+    return w:lower():gsub("^%p+", ""):gsub("%p+$", "")
+  end
+  local bw, cw = split(before), split(cont)
+  local maxn = math.min(#bw, #cw, 8)
+  local best = 0
+  for n = 1, maxn do
+    local match = true
+    for i = 1, n do
+      if norm(bw[#bw - n + i]) ~= norm(cw[i]) then
+        match = false
+        break
+      end
+    end
+    if match then
+      best = n
+    end
+  end
+  for _ = 1, best do
+    cont = cont:gsub("^%s*%S+", "", 1)
+  end
+  return (cont:gsub("^%s+", ""))
 end
 
 local function bump(tbl, key, sub)
@@ -372,7 +408,11 @@ local function llm_request()
       if not bf or b ~= buf or r ~= row or c ~= col then
         return
       end
-      local text = (bf:match("%s$") and content or (" " .. content))
+      local deduped = strip_overlap(bf, content)
+      if deduped == "" then
+        return
+      end
+      local text = (bf:match("%s$") and deduped or (" " .. deduped))
       current = { buf = b, row = r, col = c, text = text }
       render()
     end)
