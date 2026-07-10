@@ -12,8 +12,8 @@ local M = {}
 
 local defaults = {
   model = nil, -- REQUIRED for the LLM tier: any Ollama model you've pulled, e.g. "gemma4:e2b-mlx"
-  endpoint = "http://localhost:11434/v1/chat/completions",
-  api_key_env = "TERM", -- Ollama ignores the key; mirrors the OpenAI-compatible setup.
+  endpoint = "http://localhost:11434/api/chat", -- Ollama native (honours `think`)
+  think = false, -- false = no reasoning tokens (fast); only affects thinking-capable models
   filetypes = { "markdown" },
   debounce = 150, -- ms of idle after typing before a suggestion appears (0 = instant)
   order = 3, -- n-gram order (uni/bi/tri)
@@ -299,24 +299,25 @@ local function llm_request()
 
   local start = math.max(0, row - cfg.context_lines + 1)
   local ctx = table.concat(api.nvim_buf_get_lines(buf, start, row + 1, false), "\n")
+  -- Ollama's native /api/chat honours `think`; the OpenAI-compatible /v1 endpoint does
+  -- not, so a thinking model would waste time reasoning before every completion.
   local body = vim.json.encode({
     model = cfg.model,
     stream = false,
-    max_tokens = cfg.max_tokens,
+    think = cfg.think, -- false = skip reasoning entirely (fast); reasoning models only
     messages = {
       { role = "system", content = cfg.system_prompt },
       { role = "user", content = ctx },
     },
+    options = { num_predict = cfg.max_tokens },
   })
 
   llm_seq = llm_seq + 1
   local seq = llm_seq
-  local key = vim.env[cfg.api_key_env] or "cotyper"
 
   vim.system({
     "curl", "-s", "-m", "30", cfg.endpoint,
     "-H", "Content-Type: application/json",
-    "-H", "Authorization: Bearer " .. key,
     "-d", body,
   }, { text = true }, function(res)
     if res.code ~= 0 or not res.stdout or res.stdout == "" then
@@ -326,12 +327,13 @@ local function llm_request()
     if not ok or type(parsed) ~= "table" then
       return
     end
-    local choice = parsed.choices and parsed.choices[1]
-    local content = choice and choice.message and choice.message.content
+    -- Native /api/chat returns { message = { content, thinking } }; reasoning is kept out
+    -- of content. Strip any inline <think>…</think> too, in case a template emits it.
+    local content = parsed.message and parsed.message.content
     if type(content) ~= "string" then
       return
     end
-    content = content:gsub("^%s+", ""):gsub("[\r\n].*$", "")
+    content = content:gsub("<think>.-</think>", ""):gsub("^%s+", ""):gsub("[\r\n].*$", "")
     if content == "" then
       return
     end

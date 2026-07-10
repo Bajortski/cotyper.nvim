@@ -75,8 +75,8 @@ cotyper only accepts the ghost when you tell it to. Wire `Tab` wherever your com
 ```lua
 opts = {
   model      = nil,            -- REQUIRED for the LLM tier: any Ollama model you've pulled
-  endpoint   = "http://localhost:11434/v1/chat/completions",
-  api_key_env = "TERM",        -- env var read for the Bearer token (Ollama ignores it)
+  endpoint   = "http://localhost:11434/api/chat", -- Ollama native API (honours `think`)
+  think      = false,          -- false = no reasoning tokens (fast); thinking models only
   filetypes  = { "markdown" }, -- nil/empty = every normal buffer
   debounce   = 150,            -- ms of idle after typing before a suggestion appears (0 = instant)
   order      = 3,              -- n-gram order
