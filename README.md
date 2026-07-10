@@ -85,12 +85,27 @@ opts = {
   min_count  = 2,              -- prune threshold once the model passes prune_cap
   prune_cap  = 15000,          -- unique words before pruning kicks in
   save_interval = 60,          -- seconds between background model saves
-  context_lines = 20,          -- buffer lines sent to the LLM
-  max_tokens = 48,
+  context_lines = 8,           -- buffer lines sent to the LLM (smaller = faster eval)
+  max_tokens = 20,             -- num_predict: tokens generated per completion
+  num_ctx    = 1024,           -- context window cap (gemma4 defaults to 128K, slow)
+  keep_alive = "10m",          -- keep the model resident so it doesn't cold-reload
   llm        = true,           -- false = n-gram tier only
   highlight  = { fg = "#808080", italic = true }, -- attrs, or a group name to link
-  system_prompt = "...",       -- see source for the default
+  system_prompt = "...",       -- general autocomplete instruction; see source for default
+  style      = nil,            -- your personal voice/dialect, appended after system_prompt
+  debug      = false,          -- notify on debounce fire / query start / query complete
   data_file  = nil,            -- default: stdpath("data").."/cotyper/model.json"
+}
+```
+
+`system_prompt` holds the general "act like ghost-text autocomplete" instruction; keep
+your own preferences (name, dialect, tone) in `style` instead, so they stay separate and
+easy to edit. `style` is appended after `system_prompt` at request time. For example:
+
+```lua
+opts = {
+  style = "Write in British English (-ise spellings), in a clear, sardonic voice. "
+    .. "Keep sentences short and concise.",
 }
 ```
 

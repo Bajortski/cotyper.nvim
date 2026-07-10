@@ -35,10 +35,11 @@ local defaults = {
     .. "greet, or comment. Match the author's tense, tone, and style. Keep it to a single short "
     .. "line, at most one sentence. No new paragraphs, no lists, no quotation marks. If the "
     .. "text ends mid-word, finish that word first. Never repeat words the author has "
-    .. "already written; begin with the next new word, not a word already on the page. "
-    .. "The author's name is Toast and usually writes in English. Use British English (with "
-    .. "-ise spellings) spelling and punctuation. Write in a clear, sardonic voice. Keep "
-    .. "sentences short, concise and readable.",
+    .. "already written; begin with the next new word, not a word already on the page.",
+  -- Personal style/voice preferences, appended after `system_prompt`. Keep this for the
+  -- author's own settings (name, dialect, tone) so it stays separate from the general
+  -- instruction above. nil/empty = none.
+  style = nil,
   data_file = nil, -- default: stdpath('data')/cotyper/model.json
   debug = false, -- notify on debounce fire, query start, and query completion
 }
@@ -324,6 +325,14 @@ end
 
 -- ── LLM tier ─────────────────────────────────────────────────────────────────
 
+-- General instruction plus the author's personal style block (if any), kept separate.
+local function system_content()
+  if cfg.style and cfg.style ~= "" then
+    return cfg.system_prompt .. "\n\n" .. cfg.style
+  end
+  return cfg.system_prompt
+end
+
 local warned_no_model = false
 
 local function llm_request()
@@ -361,7 +370,7 @@ local function llm_request()
     stream = false,
     think = cfg.think, -- false = skip reasoning entirely (fast); reasoning models only
     messages = {
-      { role = "system", content = cfg.system_prompt },
+      { role = "system", content = system_content() },
       { role = "user", content = ctx },
     },
     keep_alive = cfg.keep_alive,
