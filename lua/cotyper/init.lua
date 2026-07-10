@@ -27,10 +27,14 @@ local defaults = {
   keep_alive = "10m", -- keep the model resident so it doesn't cold-reload after a pause
   llm = true, -- set false to run on the n-gram tier alone
   highlight = { fg = "#808080", italic = true },
-  system_prompt = "You are a writing assistant completing prose in the author's voice. "
-    .. "Continue the given text naturally with a short single-line continuation. "
-    .. "Avoid hedging, filler and lists. Do not repeat the text given. "
-    .. "Reply with only the continuation, no quotes or commentary.",
+  system_prompt = "You are an inline autocomplete engine, like the grey ghost text in a "
+    .. "code editor. The user message is a document the author is in the middle of writing; "
+    .. "it ends exactly at the cursor, possibly mid-sentence. Output ONLY the text that comes "
+    .. "immediately next, so it can be appended verbatim to what they wrote. Continue their "
+    .. "current sentence and train of thought — do not restate, rephrase, summarize, answer, "
+    .. "greet, or comment. Match the author's tense, tone, and style. Keep it to a single short "
+    .. "line, at most one sentence. No new paragraphs, no lists, no quotation marks. If the "
+    .. "text ends mid-word, finish that word first.",
   data_file = nil, -- default: stdpath('data')/cotyper/model.json
   debug = false, -- notify on debounce fire, query start, and query completion
 }
