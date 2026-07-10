@@ -46,6 +46,7 @@ local current = nil
 local debounce_timer = nil
 local save_timer = nil
 local enabled = true
+local squelch = false -- skip the auto-recompute for one tick right after an accept
 local llm_seq = 0 -- request generation, to drop stale LLM responses
 
 -- ── helpers ──────────────────────────────────────────────────────────────────
@@ -378,6 +379,9 @@ function M.accept_word()
   end
 
   local buf, row, col = current.buf, current.row, current.col
+  -- The insert + cursor move below fire TextChangedI/CursorMovedI; squelch the resulting
+  -- recompute for this tick so the un-accepted words survive instead of being cleared.
+  squelch = true
   api.nvim_buf_set_text(buf, row, col, row, col, { chunk })
   local newcol = col + #chunk
   api.nvim_win_set_cursor(0, { row + 1, newcol })
@@ -385,11 +389,14 @@ function M.accept_word()
   local remaining = current.text:sub(#chunk + 1)
   if remaining == "" then
     clear()
-    M.trigger() -- keep the flow going
+    M.trigger() -- phrase exhausted: fetch a fresh continuation
   else
     current = { buf = buf, row = row, col = newcol, text = remaining }
     render()
   end
+  vim.schedule(function()
+    squelch = false
+  end)
   return true
 end
 
@@ -527,6 +534,9 @@ function M.setup(opts)
   api.nvim_create_autocmd({ "TextChangedI", "CursorMovedI" }, {
     group = grp,
     callback = function()
+      if squelch then
+        return -- an accept just happened; keep the remaining ghost intact
+      end
       M.trigger()
     end,
   })
