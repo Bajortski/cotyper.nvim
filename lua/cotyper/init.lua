@@ -17,6 +17,7 @@ local defaults = {
   filetypes = { "markdown" },
   debounce = 150, -- ms before the LLM tier fires
   order = 3, -- n-gram order (uni/bi/tri)
+  lookahead = 5, -- words the n-gram tier predicts ahead (Tab still accepts one at a time)
   min_count = 2, -- prune threshold when the model grows past `prune_cap`
   prune_cap = 15000, -- unique unigrams before pruning kicks in
   save_interval = 60, -- seconds between periodic model saves
@@ -115,6 +116,28 @@ local function next_word(tokens)
   return nil
 end
 
+-- Greedily predict up to `budget` further words, feeding each back into the context.
+-- Stops on a dead end or a short repetition cycle so we don't ghost "the the the...".
+local function chain(tokens, budget)
+  local ctx = vim.list_slice and vim.list_slice(tokens, 1, #tokens) or { unpack(tokens) }
+  local out = {}
+  for _ = 1, math.max(0, budget) do
+    local w = next_word(ctx)
+    if not w then
+      break
+    end
+    if #out >= 1 and out[#out] == w then
+      break -- immediate repeat
+    end
+    if #out >= 2 and out[#out - 1] == w then
+      break -- two-word cycle (a b a b ...)
+    end
+    out[#out + 1] = w
+    ctx[#ctx + 1] = w
+  end
+  return out
+end
+
 -- Highest-count vocab word beginning with `prefix` (lowercased), other than prefix itself.
 local function complete_prefix(prefix)
   local p = prefix:lower()
@@ -192,6 +215,34 @@ local function cursor_prefix()
   return buf, row, col, before
 end
 
+-- Build the ghost text for a given before-cursor string: complete the current word (if
+-- mid-word) and/or chain up to `lookahead` predicted words. Returns "" for no suggestion.
+local function build_text(before)
+  local tokens = words_of(before)
+  if before:match("[%w']$") then
+    -- mid-word: finish the partial word, then chain the rest up to the lookahead budget.
+    local partial = before:match("[%w']+$")
+    local word = complete_prefix(partial)
+    if not word then
+      return ""
+    end
+    local text = word:sub(#partial + 1)
+    tokens[#tokens] = word -- the completed word is now the last context token
+    for _, w in ipairs(chain(tokens, cfg.lookahead - 1)) do
+      text = text .. " " .. w
+    end
+    return text
+  else
+    -- word boundary: chain up to `lookahead` next words.
+    local text, sep = "", (before:match("%s$") and "" or " ")
+    for _, w in ipairs(chain(tokens, cfg.lookahead)) do
+      text = text .. sep .. w
+      sep = " "
+    end
+    return text
+  end
+end
+
 -- Instant n-gram suggestion for the current cursor position.
 local function ngram_suggest()
   local buf, row, col, before = cursor_prefix()
@@ -200,22 +251,8 @@ local function ngram_suggest()
     return false
   end
 
-  local text
-  local mid_word = before:match("[%w']$") ~= nil
-  if mid_word then
-    local partial = before:match("[%w']+$")
-    local word = complete_prefix(partial)
-    if word then
-      text = word:sub(#partial + 1)
-    end
-  else
-    local nw = next_word(words_of(before))
-    if nw then
-      text = (before:match("%s$") and "" or " ") .. nw
-    end
-  end
-
-  if not text or text == "" then
+  local text = build_text(before)
+  if text == "" then
     clear()
     return false
   end
@@ -466,6 +503,9 @@ function M._predict(before)
     return word and word:sub(#partial + 1) or nil
   end
   return next_word(words_of(before))
+end
+function M._suggest_text(before)
+  return build_text(before)
 end
 
 -- ── setup ────────────────────────────────────────────────────────────────────
