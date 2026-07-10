@@ -15,7 +15,7 @@ local defaults = {
   endpoint = "http://localhost:11434/v1/chat/completions",
   api_key_env = "TERM", -- Ollama ignores the key; mirrors the OpenAI-compatible setup.
   filetypes = { "markdown" },
-  debounce = 150, -- ms before the LLM tier fires
+  debounce = 150, -- ms of idle after typing before a suggestion appears (0 = instant)
   order = 3, -- n-gram order (uni/bi/tri)
   lookahead = 5, -- words the n-gram tier predicts ahead (Tab still accepts one at a time)
   min_count = 2, -- prune threshold when the model grows past `prune_cap`
@@ -43,7 +43,7 @@ local dirty = false
 
 -- pending ghost: { buf, row, col, text } — text is the un-accepted remainder.
 local current = nil
-local debounce_timer = nil
+local trigger_timer = nil
 local save_timer = nil
 local enabled = true
 local squelch = false -- skip the auto-recompute for one tick right after an accept
@@ -163,6 +163,11 @@ local function set_hl()
 end
 
 local function clear()
+  if trigger_timer then
+    trigger_timer:stop()
+    trigger_timer:close()
+    trigger_timer = nil
+  end
   if current then
     pcall(api.nvim_buf_clear_namespace, current.buf, ns, 0, -1)
   end
@@ -330,31 +335,29 @@ local function llm_request()
   end)
 end
 
-local function schedule_llm()
-  if not cfg.llm then
-    return
+-- Recompute the suggestion now: instant n-gram tier, then the async LLM tier.
+function M.trigger()
+  ngram_suggest()
+  if cfg.llm then
+    llm_request()
   end
-  if debounce_timer then
-    debounce_timer:stop()
-    debounce_timer:close()
-    debounce_timer = nil
-  end
-  debounce_timer = uv.new_timer()
-  debounce_timer:start(cfg.debounce, 0, function()
-    debounce_timer:stop()
-    debounce_timer:close()
-    debounce_timer = nil
-    vim.schedule(llm_request)
-  end)
 end
 
--- Public: recompute the whole suggestion (instant tier now, LLM tier soon).
-function M.trigger()
-  if ngram_suggest() then
-    schedule_llm()
-  else
-    schedule_llm() -- LLM may still have something at a boundary the n-gram missed
+-- Debounced entry point: hide any stale ghost while the user is typing, then fire the
+-- suggestion once typing pauses for `debounce` ms (0 = trigger immediately).
+local function schedule_trigger()
+  clear() -- also stops any pending timer; don't show an out-of-date ghost mid-type
+  if (cfg.debounce or 0) <= 0 then
+    M.trigger()
+    return
   end
+  trigger_timer = uv.new_timer()
+  trigger_timer:start(cfg.debounce, 0, function()
+    trigger_timer:stop()
+    trigger_timer:close()
+    trigger_timer = nil
+    vim.schedule(M.trigger)
+  end)
 end
 
 -- ── acceptance ───────────────────────────────────────────────────────────────
@@ -537,7 +540,7 @@ function M.setup(opts)
       if squelch then
         return -- an accept just happened; keep the remaining ghost intact
       end
-      M.trigger()
+      schedule_trigger()
     end,
   })
 

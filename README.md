@@ -74,7 +74,7 @@ opts = {
   endpoint   = "http://localhost:11434/v1/chat/completions",
   api_key_env = "TERM",        -- env var read for the Bearer token (Ollama ignores it)
   filetypes  = { "markdown" }, -- nil/empty = every normal buffer
-  debounce   = 150,            -- ms before the LLM tier fires
+  debounce   = 150,            -- ms of idle after typing before a suggestion appears (0 = instant)
   order      = 3,              -- n-gram order
   min_count  = 2,              -- prune threshold once the model passes prune_cap
   prune_cap  = 15000,          -- unique words before pruning kicks in
