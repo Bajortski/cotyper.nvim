@@ -24,9 +24,15 @@ Tab is wired in your own keymap (see Installation). Also:
 - `:CotyperAssessStyle` — have the model read the current buffer and write a concise style
   guide (voice, rhythm, diction, quirks). It's saved to disk and folded into every
   completion prompt, so suggestions track your voice. Re-run it to refine the guide from
-  new writing (it revises the previous one rather than starting over). Your explicit
-  `style` preferences always take precedence over the learned guide.
-- `:CotyperStyle` — print the current learned style guide.
+  new writing (it revises the previous one rather than starting over). **Every assessment
+  is kept** as a timestamped version — nothing is overwritten. Your explicit `style`
+  preferences always take precedence over the learned guide.
+- `:CotyperStyle [n]` — print the active tag's current style guide, or version `n`
+  (`1` = newest; see `:CotyperStyleHistory` for the numbering).
+- `:CotyperStyleHistory` — list the saved versions for the active tag, newest first, with
+  timestamps.
+- `:CotyperTag` — show which style tag the current buffer resolves to (see *Per-tag style
+  guides* below).
 
 ## Requirements
 - Neovim 0.10+ (`vim.system`, `vim.uv`).
@@ -90,6 +96,9 @@ opts = {
   style      = nil,            -- your personal voice/dialect, appended after system_prompt
   debug      = false,          -- notify on debounce fire / query start / query complete
   data_file  = nil,            -- default: stdpath("data").."/cotyper/model.json"
+  style_dir    = nil,          -- default: stdpath("data").."/cotyper/styles"
+  style_by_tag = false,        -- true = pick the guide from the note's frontmatter first tag
+  default_tag  = "default",    -- guide used when style_by_tag=false, or a note has no tags
 }
 ```
 
@@ -109,6 +118,27 @@ opts = {
   llm = false,
 }
 ```
+
+## Style guides, versioned & tagged
+`:CotyperAssessStyle` writes a style guide under `style_dir` and folds it into every
+completion prompt. Guides are **versioned** — each assessment is saved as its own
+timestamped file (`styles/<tag>/<epoch>.md`) and older versions are kept forever. Browse
+them with `:CotyperStyleHistory` and print any one with `:CotyperStyle <n>`; to roll back,
+just delete newer files on disk.
+
+By default there's a single guide (tag `default`). Turn on `style_by_tag = true` to keep
+**separate guides per tag**, chosen automatically from the current note's Obsidian
+frontmatter — the first entry of `tags:` (or `tag:`) picks the guide:
+
+```markdown
+---
+tags: [wikipedia]
+---
+```
+…routes assessments and completions through `styles/wikipedia/`. Notes without a tag fall
+back to `default_tag`. `:CotyperTag` shows which tag the current buffer resolves to. A
+pre-existing `style.md` from before versioning is migrated into `styles/default/` on first
+run.
 
 ## How the model learns
 Words from your markdown buffers are folded into unigram/bigram/trigram counts on

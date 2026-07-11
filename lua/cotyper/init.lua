@@ -43,8 +43,11 @@ local defaults = {
   data_file = nil, -- default: stdpath('data')/cotyper/model.json
   debug = false, -- notify on debounce fire, query start, and query completion
   -- :CotyperAssessStyle asks the model to write a style guide from your writing and folds
-  -- it into every completion prompt so output tracks your voice over time.
-  style_file = nil, -- default: stdpath('data')/cotyper/style.md
+  -- it into every completion prompt so output tracks your voice over time. Every assessment
+  -- is kept as a timestamped version under style_dir/<tag>/; nothing is overwritten.
+  style_dir = nil, -- default: stdpath('data')/cotyper/styles
+  style_by_tag = false, -- true = pick the guide from the note's frontmatter first tag
+  default_tag = "default", -- guide used when style_by_tag=false, or a note has no tags
   assess_sample_lines = 400, -- lines of the current buffer sampled when assessing
   assess_max_tokens = 512, -- num_predict for the assessment (a longer, one-off generation)
   assess_num_ctx = 8192, -- context window for the assessment (must fit the writing sample)
@@ -75,8 +78,9 @@ local save_timer = nil
 local enabled = true
 local squelch = false -- skip the auto-recompute for one tick right after an accept
 local llm_seq = 0 -- request generation, to drop stale LLM responses
-local learned_style = nil -- model-written style assessment, loaded from disk, used in prompts
+local styles_cache = {} -- tag -> current (newest) style guide text, loaded from disk lazily
 local assessing = false -- guard against concurrent :CotyperAssessStyle runs
+local current_style -- fwd decl: resolves the active tag's guide (defined in the style block)
 
 -- ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -340,10 +344,11 @@ local function system_content()
   if cfg.style and cfg.style ~= "" then
     parts[#parts + 1] = cfg.style
   end
-  if learned_style and learned_style ~= "" then
+  local learned = current_style()
+  if learned and learned ~= "" then
     parts[#parts + 1] = "Observed style of this author — match it for voice, rhythm and "
       .. "diction, but where it conflicts with the author's stated preferences above, the "
-      .. "stated preferences win:\n" .. learned_style
+      .. "stated preferences win:\n" .. learned
   end
   return table.concat(parts, "\n\n")
 end
@@ -612,30 +617,159 @@ end
 M.load = load
 
 -- ── style assessment ─────────────────────────────────────────────────────────
+--
+-- Guides live under style_dir()/<tag>/<epoch>.md. The newest file in a tag dir is that
+-- tag's active guide; :CotyperAssessStyle writes a fresh timestamped file each time, so
+-- older versions are kept forever. The tag is `default` unless `style_by_tag` is on, in
+-- which case it comes from the current note's frontmatter (first `tags:` entry).
 
-local function style_path()
-  return cfg.style_file or (vim.fn.stdpath("data") .. "/cotyper/style.md")
+local function style_dir()
+  return cfg.style_dir or (vim.fn.stdpath("data") .. "/cotyper/styles")
 end
 
-local function load_style()
-  local fd = io.open(style_path(), "r")
+-- Make a tag safe to use as a directory name; empty/blank falls back to the default tag.
+local function sanitize_tag(s)
+  s = (s or ""):lower():gsub("[%s/]+", "-"):gsub("[^%w%._-]", "")
+  s = s:gsub("^-+", ""):gsub("-+$", "")
+  if s == "" then
+    return cfg.default_tag
+  end
+  return s
+end
+
+-- Resolve the active tag for a buffer. With style_by_tag off, always the default tag.
+-- Otherwise read the leading YAML frontmatter and return the first `tags:`/`tag:` value.
+local function buf_tag(buf)
+  if not cfg.style_by_tag then
+    return cfg.default_tag
+  end
+  buf = buf or api.nvim_get_current_buf()
+  local lines = api.nvim_buf_get_lines(buf, 0, 40, false)
+  if not lines[1] or lines[1] ~= "---" then
+    return cfg.default_tag
+  end
+  local in_tags = false
+  for i = 2, #lines do
+    local line = lines[i]
+    if line == "---" or line == "..." then
+      break
+    end
+    -- inline forms: `tags: [a, b]`, `tags: a, b`, `tags: a`
+    local inline = line:match("^%s*tags?%s*:%s*(.+)$")
+    if inline and inline:match("%S") then
+      inline = inline:gsub("^%[", ""):gsub("%]$", "")
+      local first = inline:match("[^,%s][^,]*")
+      if first then
+        return sanitize_tag((first:gsub("^['\"]", ""):gsub("['\"]$", "")))
+      end
+    elseif line:match("^%s*tags?%s*:%s*$") then
+      in_tags = true -- block list follows
+    elseif in_tags then
+      local item = line:match("^%s*-%s*(.+)$")
+      if item then
+        return sanitize_tag((item:gsub("^['\"]", ""):gsub("['\"]$", "")))
+      elseif line:match("%S") then
+        break -- block list ended without an item
+      end
+    end
+  end
+  return cfg.default_tag
+end
+
+-- All saved versions for a tag, newest-first, as { path = ..., time = <epoch> }.
+local function versions(tag)
+  local dir = style_dir() .. "/" .. tag
+  local out = {}
+  local it = vim.fs.dir(dir)
+  if it then
+    for name, typ in it do
+      if typ == "file" then
+        local epoch, suffix = name:match("^(%d+)%-?(%d*)%.md$")
+        if epoch then
+          out[#out + 1] = {
+            path = dir .. "/" .. name,
+            time = tonumber(epoch),
+            seq = tonumber(suffix) or 1, -- collision suffix; bare file = 1, -2 = 2, …
+          }
+        end
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.time ~= b.time then
+      return a.time > b.time
+    end
+    return a.seq > b.seq -- newer collisions (higher suffix) rank first
+  end)
+  return out
+end
+
+local function read_file(path)
+  local fd = io.open(path, "r")
   if not fd then
-    return
+    return nil
   end
   local content = fd:read("*a")
   fd:close()
   if content and content:match("%S") then
-    learned_style = content
+    return content
   end
+  return nil
 end
 
-local function save_style(text)
-  local path = style_path()
-  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+local function newest(tag)
+  local v = versions(tag)
+  return v[1]
+end
+
+-- Load (and memoise) the newest guide for a tag into styles_cache. Returns the text or nil.
+local function load_tag(tag)
+  if styles_cache[tag] == nil then
+    local v = newest(tag)
+    styles_cache[tag] = (v and read_file(v.path)) or false
+  end
+  return styles_cache[tag] or nil
+end
+
+-- The active guide for the current buffer (resolves tag, loads lazily). Assigned to the
+-- forward-declared local so system_content() can call it.
+function current_style()
+  return load_tag(buf_tag(api.nvim_get_current_buf()))
+end
+
+-- Write a new timestamped version for `tag`; never overwrites an existing file.
+local function save_style(tag, text)
+  local dir = style_dir() .. "/" .. tag
+  vim.fn.mkdir(dir, "p")
+  local base = os.time()
+  local path = dir .. "/" .. base .. ".md"
+  local n = 2
+  while uv.fs_stat(path) do
+    path = dir .. "/" .. base .. "-" .. n .. ".md"
+    n = n + 1
+  end
   local fd = io.open(path, "w")
   if fd then
     fd:write(text)
     fd:close()
+  end
+  styles_cache[tag] = text
+  return path
+end
+
+-- One-time migration: fold a pre-versioning style.md into the default tag's history.
+local function migrate_legacy_style()
+  local legacy = vim.fn.stdpath("data") .. "/cotyper/style.md"
+  if not uv.fs_stat(legacy) then
+    return
+  end
+  if #versions(cfg.default_tag) > 0 then
+    return -- already have versioned guides; leave the legacy file alone
+  end
+  local content = read_file(legacy)
+  if content then
+    save_style(cfg.default_tag, content)
+    styles_cache[cfg.default_tag] = nil -- re-read from the new versioned file on demand
   end
 end
 
@@ -652,6 +786,7 @@ local function assess_style()
   end
 
   local buf = api.nvim_get_current_buf()
+  local tag = buf_tag(buf)
   local lines = api.nvim_buf_get_lines(buf, 0, cfg.assess_sample_lines, false)
   local sample = table.concat(lines, "\n")
   if not sample:match("%S") then
@@ -666,9 +801,10 @@ local function assess_style()
     .. "dialect/spelling; and any recurring quirks. Be specific and actionable. If a "
     .. "PREVIOUS STYLE GUIDE is given, revise and sharpen it using the new sample rather "
     .. "than starting over. Output only the style guide, no preamble."
+  local prev = load_tag(tag)
   local user = sample
-  if learned_style and learned_style ~= "" then
-    user = "PREVIOUS STYLE GUIDE:\n" .. learned_style .. "\n\nWRITING SAMPLE:\n" .. sample
+  if prev and prev ~= "" then
+    user = "PREVIOUS STYLE GUIDE:\n" .. prev .. "\n\nWRITING SAMPLE:\n" .. sample
   end
 
   local body = vim.json.encode({
@@ -706,9 +842,8 @@ local function assess_style()
         return
       end
       content = content:gsub("<think>.-</think>", ""):gsub("^%s+", ""):gsub("%s+$", "")
-      learned_style = content
-      save_style(content)
-      vim.notify("cotyper: style guide updated in " .. ms .. "ms (" .. style_path() .. ").")
+      local path = save_style(tag, content)
+      vim.notify("cotyper: [" .. tag .. "] style guide updated in " .. ms .. "ms (" .. path .. ").")
     end)
   end)
 end
@@ -729,6 +864,19 @@ end
 function M._suggest_text(before)
   return build_text(before)
 end
+-- Exposed for testing the style tier headlessly.
+function M._save_style(tag, text)
+  return save_style(sanitize_tag(tag), text)
+end
+function M._versions(tag)
+  return versions(sanitize_tag(tag))
+end
+function M._buf_tag(buf)
+  return buf_tag(buf)
+end
+function M._current_style()
+  return current_style()
+end
 
 -- ── setup ────────────────────────────────────────────────────────────────────
 
@@ -741,7 +889,8 @@ function M.setup(opts)
 
   set_hl()
   load()
-  load_style()
+  migrate_legacy_style()
+  load_tag(cfg.default_tag) -- pre-warm the default guide
 
   local grp = api.nvim_create_augroup("cotyper", { clear = true })
 
@@ -797,13 +946,45 @@ function M.setup(opts)
   api.nvim_create_user_command("CotyperAssessStyle", assess_style, {
     desc = "Have the model assess this buffer's writing style and use it in completions",
   })
-  api.nvim_create_user_command("CotyperStyle", function()
-    if learned_style and learned_style ~= "" then
-      vim.notify(learned_style)
-    else
-      vim.notify("cotyper: no style guide yet — run :CotyperAssessStyle.")
+  api.nvim_create_user_command("CotyperStyle", function(a)
+    local tag = buf_tag(api.nvim_get_current_buf())
+    local v = versions(tag)
+    if #v == 0 then
+      vim.notify("cotyper: [" .. tag .. "] no style guide yet — run :CotyperAssessStyle.")
+      return
     end
-  end, { desc = "Show the current learned style guide" })
+    local n = tonumber(a.args) or 1
+    local entry = v[n]
+    if not entry then
+      vim.notify("cotyper: [" .. tag .. "] version " .. n .. " does not exist (1.." .. #v .. ").", vim.log.levels.WARN)
+      return
+    end
+    local text = read_file(entry.path) or "(empty)"
+    vim.notify("── [" .. tag .. "] style guide " .. n .. "/" .. #v .. " ──\n" .. text)
+  end, { nargs = "?", desc = "Show the active tag's style guide (optional version number, 1=newest)" })
+  api.nvim_create_user_command("CotyperStyleHistory", function()
+    local tag = buf_tag(api.nvim_get_current_buf())
+    local v = versions(tag)
+    if #v == 0 then
+      vim.notify("cotyper: [" .. tag .. "] no style guide yet — run :CotyperAssessStyle.")
+      return
+    end
+    local lines = { "── [" .. tag .. "] style history (" .. #v .. ") ──" }
+    for i, entry in ipairs(v) do
+      lines[#lines + 1] = string.format(
+        "%d  %s%s",
+        i,
+        os.date("%Y-%m-%d %H:%M", entry.time),
+        i == 1 and "  (current)" or ""
+      )
+    end
+    vim.notify(table.concat(lines, "\n"))
+  end, { desc = "List saved style-guide versions for the active tag (newest first)" })
+  api.nvim_create_user_command("CotyperTag", function()
+    local tag = buf_tag(api.nvim_get_current_buf())
+    local mode = cfg.style_by_tag and "from frontmatter" or "style_by_tag off"
+    vim.notify("cotyper: active style tag = [" .. tag .. "] (" .. mode .. ")")
+  end, { desc = "Show which style tag the current buffer resolves to" })
 end
 
 return M
