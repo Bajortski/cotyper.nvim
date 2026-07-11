@@ -251,7 +251,9 @@ local function render()
   pcall(api.nvim_buf_set_extmark, current.buf, ns, current.row, current.col, {
     virt_text = { { current.text, "CotyperGhost" } },
     virt_text_pos = "inline",
-    hl_mode = "combine",
+    -- "replace" so the ghost renders purely as CotyperGhost; "combine" lets a background
+    -- highlight under the cursor (matchparen, autopairs) bleed into the ghost text.
+    hl_mode = "replace",
   })
 end
 
