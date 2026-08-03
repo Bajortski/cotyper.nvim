@@ -146,5 +146,33 @@ Words from your markdown buffers are folded into unigram/bigram/trigram counts o
 exit) to `data_file`, and reloaded on startup — so predictions improve the more you write
 and survive restarts. Rare entries are pruned once the vocabulary grows past `prune_cap`.
 
+## Development
+
+The plugin is split by concern under `lua/cotyper/`:
+
+| Module | Holds |
+|--------|-------|
+| `config.lua` | Defaults and the shared, live settings table |
+| `util.lua` | Word splitting, overlap trimming, file IO, debug notifications |
+| `ngram.lua` | The instant tier: learn, predict, persist |
+| `ghost.lua` | Eligibility, cursor context, extmark rendering, acceptance |
+| `ollama.lua` | HTTP wrapper over Ollama's `/api/chat` |
+| `llm.lua` | The smart tier: prompt assembly and completion requests |
+| `style.lua` | Learned, versioned, per-tag style guides |
+| `commands.lua` | The `:Cotyper*` user commands |
+| `init.lua` | Setup, autocmds, and the public API |
+
+Every module imports `config.values` once; `setup()` updates that table in place, so a
+re-`setup()` is visible everywhere without re-requiring anything.
+
+Run the test suite from the repo root:
+
+```sh
+nvim --headless -l tests/run.lua
+```
+
+It covers the n-gram tier, style-guide tagging and versioning, and the ghost
+render/accept path. Nothing in it talks to Ollama, so it runs offline.
+
 ## License
 I do not care what you do with this.
