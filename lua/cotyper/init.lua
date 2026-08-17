@@ -101,8 +101,8 @@ function M._versions(tag)
   return style.versions(style.sanitize_tag(tag))
 end
 
-function M._buf_tag(buf)
-  return style.buf_tag(buf)
+function M._buf_tag(buf, opts)
+  return style.buf_tag(buf, opts)
 end
 
 function M._current_style()

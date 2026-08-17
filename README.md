@@ -31,8 +31,9 @@ Tab is wired in your own keymap (see Installation). Also:
   (`1` = newest; see `:CotyperStyleHistory` for the numbering).
 - `:CotyperStyleHistory` — list the saved versions for the active tag, newest first, with
   timestamps.
-- `:CotyperTag` — show which style tag the current buffer resolves to (see *Per-tag style
-  guides* below).
+- `:CotyperTag` — show which style tag the current buffer resolves to, and for a
+  multi-tagged note the runner-up tags with their vault note counts (see *Style guides,
+  versioned & tagged* below).
 
 ## Requirements
 - Neovim 0.10+ (`vim.system`, `vim.uv`).
@@ -97,8 +98,10 @@ opts = {
   debug      = false,          -- notify on debounce fire / query start / query complete
   data_file  = nil,            -- default: stdpath("data").."/cotyper/model.json"
   style_dir    = nil,          -- default: stdpath("data").."/cotyper/styles"
-  style_by_tag = false,        -- true = pick the guide from the note's frontmatter first tag
+  style_by_tag = false,        -- true = pick the guide from the note's frontmatter tags
   default_tag  = "default",    -- guide used when style_by_tag=false, or a note has no tags
+  tag_root     = nil,          -- notes to count tags over; nil = walk up for an .obsidian dir
+  tag_index_ttl = 300,         -- seconds a tag count is reused before being recounted
 }
 ```
 
@@ -128,7 +131,7 @@ just delete newer files on disk.
 
 By default there's a single guide (tag `default`). Turn on `style_by_tag = true` to keep
 **separate guides per tag**, chosen automatically from the current note's Obsidian
-frontmatter — the first entry of `tags:` (or `tag:`) picks the guide:
+frontmatter `tags:` (or `tag:`):
 
 ```markdown
 ---
@@ -136,9 +139,31 @@ tags: [wikipedia]
 ---
 ```
 …routes assessments and completions through `styles/wikipedia/`. Notes without a tag fall
-back to `default_tag`. `:CotyperTag` shows which tag the current buffer resolves to. A
-pre-existing `style.md` from before versioning is migrated into `styles/default/` on first
-run.
+back to `default_tag`. A pre-existing `style.md` from before versioning is migrated into
+`styles/default/` on first run.
+
+When a note carries **several** tags, the one used by the most notes wins:
+
+```markdown
+---
+tags: [dream, journal]     # 47 notes vs 1204 → filed under `journal`
+---
+```
+
+The point is that a guide accumulates against the largest body of writing you have,
+instead of splintering across whichever tag you happened to type first. Counting needs a
+collection of notes to count over: `tag_root` names one, or leaving it `nil` walks up from
+the note looking for an Obsidian `.obsidian` directory. Ties keep the earlier tag, and if
+there's no collection to count the first tag wins — the pre-1.2 behaviour.
+
+The count is a walk of the vault, so it's kept off the hot path: notes with zero or one
+tag never trigger it, the result is cached for `tag_index_ttl` seconds, and only
+`:CotyperAssessStyle` will ever wait on a cold one. Completions never block — they use the
+count if it's warm and fall back to document order if it isn't, warming it in the
+background meanwhile.
+
+`:CotyperTag` shows which tag the current buffer resolves to, along with the runner-up
+tags and their note counts, so a surprising pick can be traced to the numbers behind it.
 
 ## How the model learns
 Words from your markdown buffers are folded into unigram/bigram/trigram counts on

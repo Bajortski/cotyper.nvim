@@ -42,8 +42,15 @@ M.defaults = {
   -- it into every completion prompt so output tracks your voice over time. Every assessment
   -- is kept as a timestamped version under style_dir/<tag>/; nothing is overwritten.
   style_dir = nil, -- default: stdpath('data')/cotyper/styles
-  style_by_tag = false, -- true = pick the guide from the note's frontmatter first tag
+  style_by_tag = false, -- true = pick the guide from the note's frontmatter tags
   default_tag = "default", -- guide used when style_by_tag=false, or a note has no tags
+  -- A note carrying several tags is filed under whichever of them the most notes
+  -- use, so a guide builds up against the largest body of writing. Counting needs
+  -- a note collection: `tag_root` names one, or nil walks up from the note looking
+  -- for an Obsidian `.obsidian` directory. With no collection to count (or a
+  -- tie) the note's first tag wins, which is the old behaviour.
+  tag_root = nil,
+  tag_index_ttl = 300, -- seconds a tag count is reused before being recounted
   assess_sample_lines = 400, -- lines of the current buffer sampled when assessing
   assess_max_tokens = 512, -- num_predict for the assessment (a longer, one-off generation)
   assess_num_ctx = 8192, -- context window for the assessment (must fit the writing sample)

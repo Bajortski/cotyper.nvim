@@ -77,10 +77,29 @@ function M.setup()
   end, { desc = "List saved style-guide versions for the active tag (newest first)" })
 
   api.nvim_create_user_command("CotyperTag", function()
-    local tag = style.buf_tag(api.nvim_get_current_buf())
+    local buf = api.nvim_get_current_buf()
+    local tag = style.buf_tag(buf)
     local mode = cfg.style_by_tag and "from frontmatter" or "style_by_tag off"
-    vim.notify("cotyper: active style tag = [" .. tag .. "] (" .. mode .. ")")
-  end, { desc = "Show which style tag the current buffer resolves to" })
+    local lines = { "cotyper: active style tag = [" .. tag .. "] (" .. mode .. ")" }
+
+    -- Show the runners-up and their vault counts, so a surprising pick can be
+    -- traced to the numbers behind it rather than guessed at.
+    local candidates, indexed = style.tag_candidates(buf)
+    if cfg.style_by_tag and #candidates > 1 then
+      local root = style.vault_root(api.nvim_buf_get_name(buf))
+      lines[#lines + 1] = indexed and ("counted over " .. root)
+        or (root and "vault index still warming — using document order" or "no vault found — using document order")
+      for _, c in ipairs(candidates) do
+        lines[#lines + 1] = string.format(
+          "  %s %-24s %s",
+          c.tag == tag and "→" or " ",
+          c.tag,
+          c.count and (c.count .. " notes") or ""
+        )
+      end
+    end
+    vim.notify(table.concat(lines, "\n"))
+  end, { desc = "Show which style tag the current buffer resolves to, and why" })
 end
 
 return M
