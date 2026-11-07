@@ -109,6 +109,35 @@ function M._current_style()
   return style.current()
 end
 
+-- ── keymaps ──────────────────────────────────────────────────────────────────
+
+local actions = {
+  accept_word = ghost.accept_word,
+  accept_all = ghost.accept_all,
+  dismiss = function()
+    if not ghost.is_visible() then
+      return false
+    end
+    ghost.clear()
+    return true
+  end,
+}
+
+--- Map each configured key in insert mode. With no ghost showing, the key does
+--- whatever it did unmapped, so a binding costs nothing when there's no suggestion.
+local function map_keys()
+  for name, lhs in pairs(cfg.keymaps or {}) do
+    local act = actions[name]
+    if act and lhs then
+      vim.keymap.set("i", lhs, function()
+        if not act() then
+          api.nvim_feedkeys(vim.keycode(lhs), "n", false)
+        end
+      end, { desc = "cotyper: " .. name:gsub("_", " ") })
+    end
+  end
+end
+
 -- ── setup ────────────────────────────────────────────────────────────────────
 
 function M.setup(opts)
@@ -162,6 +191,7 @@ function M.setup(opts)
   end)
 
   commands.setup()
+  map_keys()
 end
 
 return M

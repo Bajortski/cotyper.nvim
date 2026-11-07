@@ -31,6 +31,35 @@ function M.system_content()
   return table.concat(parts, "\n\n")
 end
 
+--- The full chat: system prompt, few-shot turns, then the document itself.
+---@param ctx string
+---@return table[]
+function M.messages(ctx)
+  local msgs = { { role = "system", content = M.system_content() } }
+  for _, ex in ipairs(cfg.examples or config.default_examples) do
+    msgs[#msgs + 1] = { role = "user", content = ex[1] }
+    msgs[#msgs + 1] = { role = "assistant", content = ex[2] }
+  end
+  msgs[#msgs + 1] = { role = "user", content = ctx }
+  return msgs
+end
+
+--- Turn raw model output into ghost text for `before`, or "" to show nothing.
+---@param before string text left of the cursor
+---@param ctx string document context the model was given
+---@param content string
+---@param truncated boolean|nil
+---@return string
+function M.finish(before, ctx, content, truncated)
+  local text = util.clip_completion(content, truncated)
+  text = util.strip_overlap(before, text)
+  text = util.drop_double_determiner(before, text)
+  if text == "" or util.echoes(ctx, text) then
+    return ""
+  end
+  return before:match("%s$") and text or (" " .. text)
+end
+
 --- Fire a completion request for the current cursor position, if appropriate.
 function M.request()
   if not cfg.llm then
@@ -55,22 +84,17 @@ function M.request()
   util.dbg("query start (" .. tostring(cfg.model) .. ")")
 
   ollama.chat({
-    system = M.system_content(),
-    user = ctx,
+    messages = M.messages(ctx),
     max_tokens = cfg.max_tokens,
     num_ctx = cfg.num_ctx,
+    options = { temperature = cfg.temperature },
     timeout = 30,
-  }, function(content, err, ms)
+  }, function(content, err, ms, truncated)
     if not content then
       util.dbg("query failed after " .. ms .. "ms (" .. err .. ")", vim.log.levels.WARN)
       return
     end
-    -- Completions are single-line; drop anything after the first newline.
-    content = content:gsub("[\r\n].*$", "")
-    if content == "" then
-      return
-    end
-    util.dbg("query complete in " .. ms .. "ms")
+    util.dbg("query complete in " .. ms .. "ms: " .. content)
     vim.schedule(function()
       -- Only apply if nothing has moved since this request was issued.
       if mine ~= seq then
@@ -80,11 +104,10 @@ function M.request()
       if not bf or b ~= buf or r ~= row or c ~= col then
         return
       end
-      local deduped = util.strip_overlap(bf, content)
-      if deduped == "" then
-        return
+      local text = M.finish(bf, ctx, content, truncated)
+      if text ~= "" then
+        ghost.show(b, r, c, text)
       end
-      ghost.show(b, r, c, bf:match("%s$") and deduped or (" " .. deduped))
     end)
   end)
 end

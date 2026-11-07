@@ -12,10 +12,11 @@ Everything runs locally.
 | Key      | When                | Does                                             |
 |----------|---------------------|--------------------------------------------------|
 | *(type)* | insert mode         | Grey ghost text is suggested inline as you write |
-| `Tab`    | a ghost is showing  | Accept the **next word** (press again to walk it)|
+| `<C-l>`  | a ghost is showing  | Accept the **next word** (press again to walk it)|
 | *(type)* | a ghost is showing  | Ignore it — the ghost re-snaps to what you meant |
 
-Tab is wired in your own keymap (see Installation). Also:
+`<C-l>` is the default `keymaps.accept_word`; it keeps clear of Tab so it never fights
+a completion menu, and with no ghost showing it does whatever it did before. Also:
 - `require("cotyper").accept_all()` — accept the whole suggestion at once.
 - `:CotyperToggle` — turn suggestions on/off.
 - `:CotyperDismiss` — clear the current ghost.
@@ -61,7 +62,15 @@ Tab is wired in your own keymap (see Installation). Also:
 }
 ```
 
-cotyper only accepts the ghost when you tell it to. Wire `Tab` wherever your completion `Tab` lives so it takes priority when a ghost is visible, e.g. in a blink.cmp keymap:
+cotyper only accepts the ghost when you tell it to. It maps `<C-l>` (accept word) in
+insert mode by default; change or add keys with `keymaps`, each of which falls through to
+the key's normal behaviour when no ghost is showing:
+```lua
+keymaps = { accept_word = "<C-l>", accept_all = "<C-S-l>", dismiss = false },
+```
+
+If you'd rather share `Tab` with your completion menu, set `keymaps = {}` and wire it
+yourself, e.g. in a blink.cmp keymap:
 ```lua
 ["<Tab>"] = {
   function(cmp)
@@ -88,7 +97,10 @@ opts = {
   prune_cap  = 15000,          -- unique words before pruning kicks in
   save_interval = 60,          -- seconds between background model saves
   context_lines = 8,           -- buffer lines sent to the LLM (smaller = faster eval)
-  max_tokens = 20,             -- num_predict: tokens generated per completion
+  max_tokens = 16,             -- num_predict: tokens generated per completion
+  temperature = 0.2,           -- low = the obvious continuation; model defaults wander
+  examples   = nil,            -- few-shot { document, completion } pairs; nil = built-in, {} = none
+  keymaps    = { accept_word = "<C-l>", accept_all = false, dismiss = false },
   num_ctx    = 1024,           -- context window cap (gemma4 defaults to 128K, slow)
   keep_alive = "10m",          -- keep the model resident so it doesn't cold-reload
   llm        = true,           -- false = n-gram tier only
@@ -104,6 +116,14 @@ opts = {
   tag_index_ttl = 300,         -- seconds a tag count is reused before being recounted
 }
 ```
+
+### Prediction quality
+Small local models are bad at being told they're an autocomplete: given a document as a
+chat message they tend to reply to it, copy a nearby line back out, or ramble. cotyper
+counters that by sending a few worked `examples` as prior chat turns (the model copies
+their length and register), sampling at a low `temperature`, and tidying the output: one
+line, cut after the first sentence, no half-generated last word, no words repeated from
+the cursor, and dropped entirely if it just echoes text already in the document.
 
 `system_prompt` holds the general "act like ghost-text autocomplete" instruction; keep your own preferences (name, dialect, tone) in `style` instead, so they stay separate and easy to edit. `style` is appended after `system_prompt` at request time. For example:
 ```lua

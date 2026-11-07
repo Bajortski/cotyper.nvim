@@ -97,6 +97,82 @@ function M.strip_overlap(before, cont)
   return (cont:gsub("^%s+", ""))
 end
 
+--- Tidy raw model output into one ghost-sized phrase: first line only, no wrapping
+--- quotes or fences, cut after the first sentence ending, and — when generation hit
+--- the token limit — without the half-generated last word.
+---@param s string
+---@param truncated boolean|nil
+---@return string
+-- Wrapping quotes a model may put around its answer. Matched as whole strings: the
+-- curly ones are multibyte, so a Lua character class would chew stray UTF-8 bytes.
+local quotes = { '"', "'", "`", "“", "”", "‘", "’" }
+
+local function unquote(s)
+  local changed = true
+  while changed do
+    changed = false
+    for _, q in ipairs(quotes) do
+      if s:sub(1, #q) == q then
+        s, changed = s:sub(#q + 1), true
+      end
+      if #s >= #q and s:sub(-#q) == q then
+        s, changed = s:sub(1, -#q - 1), true
+      end
+    end
+  end
+  return s
+end
+
+function M.clip_completion(s, truncated)
+  s = unquote(s:match("^[^\r\n]*"):gsub("^%s+", ""):gsub("%s+$", ""))
+  local sentence = s:match("^(.-[%.!?;][\"')%]]?)%s")
+  if sentence then
+    return sentence
+  end
+  if truncated and not s:match("[%.!?;]$") then
+    s = s:gsub("%s+%S+$", "")
+  end
+  return s
+end
+
+local function normalized(s)
+  return " " .. s:lower():gsub("[^%w']+", " "):gsub("^%s+", ""):gsub("%s+$", "") .. " "
+end
+
+--- Does `text` (three words or more) already appear verbatim in `context`? Small
+--- models love to copy a nearby line back out; such a ghost is never what's wanted.
+---@param context string
+---@param text string
+---@return boolean
+function M.echoes(context, text)
+  local t = normalized(text)
+  local _, words = t:gsub("%S+", "")
+  if words < 3 then
+    return false
+  end
+  return normalized(context):find(t, 1, true) ~= nil
+end
+
+-- Words that can't follow one another: "a the", "the my", …
+local determiners = {}
+for _, w in ipairs({ "a", "an", "the", "my", "your", "his", "her", "its", "our", "their" }) do
+  determiners[w] = true
+end
+
+--- When `before` ends on a determiner, drop a determiner the model opened with
+--- ("…the point is that a" + "the system" → "system").
+---@param before string
+---@param cont string
+---@return string
+function M.drop_double_determiner(before, cont)
+  local last = (before:match("([%w']+)%s*$") or ""):lower()
+  local first = (cont:match("^%s*([%w']+)") or ""):lower()
+  if determiners[last] and determiners[first] then
+    return (cont:gsub("^%s*[%w']+%s*", "", 1))
+  end
+  return cont
+end
+
 --- Strip a model's reasoning block and surrounding blank space.
 ---@param s string
 ---@return string

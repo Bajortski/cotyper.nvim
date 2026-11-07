@@ -18,20 +18,32 @@ M.defaults = {
   prune_cap = 15000, -- unique unigrams before pruning kicks in
   save_interval = 60, -- seconds between periodic model saves
   context_lines = 8, -- lines of buffer context sent to the LLM (smaller = faster eval)
-  max_tokens = 20, -- num_predict: tokens the LLM generates per completion
+  max_tokens = 16, -- num_predict: tokens the LLM generates per completion
+  -- Sampling temperature. Model defaults (gemma: 1.0) make ghost text wander; low values
+  -- keep it on the obvious continuation, which is what autocomplete should offer.
+  temperature = 0.2,
   num_ctx = 1024, -- context window; cap it (gemma4 defaults to 128K, which is slow)
   keep_alive = "10m", -- keep the model resident so it doesn't cold-reload after a pause
   llm = true, -- set false to run on the n-gram tier alone
   highlight = { fg = "#808080", italic = true },
-  system_prompt = "You are an inline autocomplete engine, like the grey ghost text in a "
-    .. "code editor. The user message is a document the author is in the middle of writing; "
-    .. "it ends exactly at the cursor, possibly mid-sentence. Output ONLY the text that comes "
-    .. "immediately next, so it can be appended verbatim to what they wrote. Continue their "
-    .. "current sentence and train of thought — do not restate, rephrase, summarize, answer, "
-    .. "greet, or comment. Match the author's tense, tone, and style. Keep it to a single short "
-    .. "line, at most one sentence. No new paragraphs, no lists, no quotation marks. If the "
-    .. "text ends mid-word, finish that word first. Never repeat words the author has "
-    .. "already written; begin with the next new word, not a word already on the page.",
+  system_prompt = "You are an inline autocomplete engine. Each user message is a document "
+    .. "that stops at the author's cursor. Reply with only the next few words the author is "
+    .. "most likely to type, continuing their sentence exactly where it stops. Stay literal "
+    .. "and plain: prefer the obvious, specific continuation that follows from the text over "
+    .. "anything clever or new. Never repeat text that is already written, never comment, "
+    .. "never start a new line.",
+  -- Worked examples sent as prior chat turns before the real document. Small models
+  -- learn the task far better from these than from instructions: without them they
+  -- tend to reply to the document, echo it, or ramble. Each is { document, completion };
+  -- nil uses the built-in set below, {} sends none.
+  examples = nil,
+  -- Insert-mode keys the plugin maps itself. When no ghost is showing, the key falls
+  -- through to whatever it did before. false/nil = don't map (wire it yourself).
+  keymaps = {
+    accept_word = "<C-l>",
+    accept_all = false,
+    dismiss = false,
+  },
   -- Personal style/voice preferences, appended after `system_prompt`. Keep this for the
   -- author's own settings (name, dialect, tone) so it stays separate from the general
   -- instruction above. nil/empty = none.
@@ -54,6 +66,30 @@ M.defaults = {
   assess_sample_lines = 400, -- lines of the current buffer sampled when assessing
   assess_max_tokens = 512, -- num_predict for the assessment (a longer, one-off generation)
   assess_num_ctx = 8192, -- context window for the assessment (must fit the writing sample)
+}
+
+--- Default few-shot turns. Deliberately plain and short: the model copies their
+--- length and register as much as their content.
+M.default_examples = {
+  {
+    "# Groceries\n\nWe ran out of milk on Tuesday, and because nobody wanted to walk to the "
+      .. "shop in the rain, we",
+    "drank our tea black for two days",
+  },
+  {
+    "The meeting overran by forty minutes. By the time anyone got to the actual agenda, "
+      .. "half the room had",
+    "already left for lunch",
+  },
+  {
+    "## Setup\n\nInstall the dependencies first, then run the migration script. If the "
+      .. "script fails with a permissions error,",
+    "check that the database user owns the schema",
+  },
+  {
+    "I liked the first season a lot. The second one is",
+    "weaker, but it still has its moments",
+  },
 }
 
 --- Live settings. Import this table once; it is never replaced, only updated.
