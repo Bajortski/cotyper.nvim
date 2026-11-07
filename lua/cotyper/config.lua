@@ -38,7 +38,8 @@ M.defaults = {
   -- nil uses the built-in set below, {} sends none.
   examples = nil,
   -- Insert-mode keys the plugin maps itself. When no ghost is showing, the key falls
-  -- through to whatever it did before. false/nil = don't map (wire it yourself).
+  -- through to whatever it did before. A key set to false isn't mapped; `keymaps = false`
+  -- maps none (an empty table would just merge with these defaults).
   keymaps = {
     accept_word = "<C-l>",
     accept_all = false,

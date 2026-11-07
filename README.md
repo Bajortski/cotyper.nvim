@@ -69,8 +69,8 @@ the key's normal behaviour when no ghost is showing:
 keymaps = { accept_word = "<C-l>", accept_all = "<C-S-l>", dismiss = false },
 ```
 
-If you'd rather share `Tab` with your completion menu, set `keymaps = {}` and wire it
-yourself, e.g. in a blink.cmp keymap:
+If you'd rather share `Tab` with your completion menu, set `keymaps = false` (an empty
+table would be merged with the defaults) and wire it yourself, e.g. in a blink.cmp keymap:
 ```lua
 ["<Tab>"] = {
   function(cmp)
